@@ -1,18 +1,19 @@
-import sys
 import time
 import cv2
 from PIL import Image, ImageTk
 import tkinter as tk
 from tkinter import filedialog
 import numpy as np
-import math
 
 img: np.array
 display_img: np.array
 img_label: tk.Label
 lines_c = []  # lines
 adj_threshold: tk.Scale
-adj_K: tk.Scale
+adj_dopusk: tk.Scale
+adj_overlap: tk.Scale
+adj_gain_bg: tk.Scale
+adj_gain_line: tk.Scale
 adj_brightness: tk.Scale
 adj_contrast: tk.Scale
 
@@ -106,48 +107,61 @@ def fill_line(img_f: np.array, lx: int, rx: int, y: int, color: int):
 
 def RestoreImg():
     global lines_c
-    img_res = np.copy(img)
+    img_res = 255-np.copy(img)
     # получаем половину расстояния между соседними линиями
     dist_line = round((lines_c[-1][0]-lines_c[0][0])/(len(lines_c)-1)/2)
     # получаем среднюю половину ширины линии
     width_line = round(sum([lines_c[i][1]
                        for i in range(len(lines_c))])/len(lines_c))
+    gain_bg = adj_gain_bg.get()/100
+    gain_line = adj_gain_line.get()/100
+    dopusk = adj_dopusk.get()/100
+    overlap = adj_overlap.get()/100
+    overlap_width = round(overlap*dist_line)
+    prev_line_right_color = 0
     for line in lines_c:
-        for pixel in range(dist_line):
+        # for left
+        llp = line[0]-dist_line
+        lrp = line[0]-width_line
+        # for right
+        rlp = line[0]+width_line
+        rrp = line[0]+dist_line
+        for j in range(height):
             # for left
-            llp = line[0]-dist_line
-            lrp = line[0]-width_line-adj_K.get()
-            if llp >= lrp:
-                print('Error! K is too high.')
-                break
+            if llp >= 0:
+                color_l = round(sum([img_res[j, i]
+                                     for i in range(llp, lrp)])/(lrp-llp))
+            else:
+                continue
             # for right
-            rlp = line[0]+width_line+adj_K.get()
-            rrp = line[0]+dist_line
-            if rlp >= rrp:
-                print('Error! K is too high.')
-                break
-            for j in range(height):
-                # for left
-                if llp >= 0:
-                    color_l = round(sum([img_res[j, i]
-                                  for i in range(llp, lrp)])/(lrp-llp))
-                else:
-                    continue
-                # for right
-                if rrp <= width:
-                    color_r = round(sum([img_res[j, i]
-                                  for i in range(rlp, rrp)])/(rrp-rlp))
-                else:
-                    continue
-                
-                # fill_line left
-                for i in range(llp, line[0]):
-                    img_res[j, i] = color_l
-                # fill_line right
-                for i in range(line[0], rlp):
-                    img_res[j, i] = color_r
+            if rrp <= width:
+                color_r = round(sum([img_res[j, i]
+                                     for i in range(rlp, rrp)])/(rrp-rlp))
+            else:
+                continue
+            delta_color = (color_l-color_r)/2
+            color_l = round(color_l-delta_color*dopusk)
+            color_r = round(color_r+delta_color*dopusk)
+            # fill_line left
+            for i in range(llp, lrp):
+                img_res[j, i] = round(
+                    img_res[j, i]*gain_bg+color_l*(1-gain_bg))
+            # fill_line right
+            for i in range(rlp, rrp):
+                img_res[j, i] = round(
+                    img_res[j, i]*gain_bg+color_r*(1-gain_bg))
+            # fill_line center
+            color_c = round((img_res[j, lrp]+img_res[j, rlp])/2)
+            for i in range(lrp, rlp):
+                img_res[j, i] = round(color_c*(1-gain_line))
+
+            for i in range(llp-overlap_width, llp+overlap_width):
+                img_res[j, i] = round((prev_line_right_color+color_l)/2)
+
+            prev_line_right_color = color_r
+
     print('Success')
-    UpdImage(cv2.cvtColor(img_res, cv2.COLOR_GRAY2RGB))
+    UpdImage(cv2.cvtColor(255-img_res, cv2.COLOR_GRAY2RGB))
     # for right
 
 
@@ -160,12 +174,13 @@ def ApplyProp():
 def SaveImg():
     global display_img
     img_name = time.strftime("%d-%m-%Y_%H.%M.%S", time.localtime()) + \
-        f'_t{adj_threshold.get()},_K{adj_K.get()},_b{adj_brightness.get()},_c{adj_contrast.get()}.png'
+        f'_t{adj_threshold.get()},_d{adj_dopusk.get()},_o{adj_overlap.get()},_gbg{adj_gain_bg.get()},_gl{adj_gain_line.get()},_b{adj_brightness.get()},_c{adj_contrast.get()}.png'
     cv2.imwrite(img_name, display_img)
 
 
 if __name__ == "__main__":
-    img_path=filedialog.askopenfilename(filetypes=(("Image files", "*.png;*.jpg;*.jpeg;*.bmp"),("All files", "*.*")))
+    img_path = filedialog.askopenfilename(filetypes=(
+        ("Image files", "*.png;*.jpg;*.jpeg;*.bmp"), ("All files", "*.*")))
 
     # 'scale_2400.png'
     img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
@@ -187,28 +202,50 @@ if __name__ == "__main__":
                              to=255, orient=tk.HORIZONTAL)
     adj_threshold.grid(row=2, column=1)
 
-    label_adj_K = tk.Label(root, text="adj_K")
-    label_adj_K.grid(row=3, column=0)
-    adj_K = tk.Scale(root, length=250, from_=0, to=10, orient=tk.HORIZONTAL)
-    adj_K.grid(row=3, column=1)
+    label_adj_dopusk = tk.Label(root, text="adj_dopusk, %")
+    label_adj_dopusk.grid(row=3, column=0)
+    adj_dopusk = tk.Scale(root, length=250, from_=0,
+                          to=100, orient=tk.HORIZONTAL)
+    adj_dopusk.grid(row=3, column=1)
+
+    label_adj_overlap = tk.Label(root, text="adj_overlap, %")
+    label_adj_overlap.grid(row=3, column=0)
+    adj_overlap = tk.Scale(root, length=250, from_=0,
+                           to=100, orient=tk.HORIZONTAL)
+    adj_overlap.grid(row=3, column=1)
+
+    label_adj_gain_bg = tk.Label(root, text="adj_gain_bg, %")
+    label_adj_gain_bg.grid(row=4, column=0)
+    adj_gain_bg = tk.Scale(root, length=250, from_=0,
+                           to=100, orient=tk.HORIZONTAL)
+    adj_gain_bg.grid(row=4, column=1)
+
+    label_adj_gain_line = tk.Label(root, text="adj_gain_line, %")
+    label_adj_gain_line.grid(row=5, column=0)
+    adj_gain_line = tk.Scale(root, length=250, from_=0,
+                             to=100, orient=tk.HORIZONTAL)
+    adj_gain_line.grid(row=5, column=1)
 
     label_adj_brightness = tk.Label(root, text="adj_brightness")
-    label_adj_brightness.grid(row=4, column=0)
+    label_adj_brightness.grid(row=6, column=0)
     adj_brightness = tk.Scale(
         root, length=250, from_=-127, to=127, orient=tk.HORIZONTAL)
-    adj_brightness.grid(row=4, column=1)
+    adj_brightness.grid(row=6, column=1)
 
     label_adj_contrast = tk.Label(root, text="adj_contrast")
-    label_adj_contrast.grid(row=5, column=0)
+    label_adj_contrast.grid(row=7, column=0)
     adj_contrast = tk.Scale(root, length=250, from_=-
                             127, to=127, orient=tk.HORIZONTAL)
-    adj_contrast.grid(row=5, column=1)
+    adj_contrast.grid(row=7, column=1)
 
     # def settings
-    adj_threshold.set(143)
-    adj_K.set(0)
-    adj_brightness.set(-41)
-    adj_contrast.set(14)
+    adj_threshold.set(127)
+    adj_dopusk.set(50)
+    adj_overlap.set(50)
+    adj_gain_bg.set(50)
+    adj_gain_line.set(50)
+    adj_brightness.set(0)
+    adj_contrast.set(0)
 
     ApplyProp()
 
