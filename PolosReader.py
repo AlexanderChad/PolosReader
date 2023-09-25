@@ -4,6 +4,7 @@ from PIL import Image, ImageTk
 import tkinter as tk
 from tkinter import filedialog
 import numpy as np
+import math
 
 img: np.array
 display_img: np.array
@@ -45,6 +46,7 @@ def UpdImage(Show_img):
 def FindLines():
     global lines_c
     lines_c = []
+    contours = []
     # setting threshold of gray image
     _, threshold = cv2.threshold(
         img, adj_threshold.get(), 255, cv2.THRESH_BINARY)
@@ -64,16 +66,37 @@ def FindLines():
     # list for storing names of shapes
     for contour in contours:
         # using drawContours() function
-        cv2.drawContours(img2, [contour], 0, (255, 0, 0), 1)
+        cv2.drawContours(img2, [contour], 0, (255, 0, 0), 2)
 
-        # find lines
-        x = [contour[i][0][0] for i in range(len(contour))]
-        # y=[contour[i][0][1] for i in range(len(contour))]
-        x_center = round((min(x)+max(x))/2)
+        # compute the center of the contour
+        M = cv2.moments(contour)
+        cX = int(M["m10"] / M["m00"])
+        cY = int(M["m01"] / M["m00"])
+        '''
+        rect = cv2.minAreaRect(contour)
+        box = cv2.boxPoints(rect)
+        box = np.int0(box)
+        cv2.drawContours(img2, [box], 0, (0, 0, 255), 2)
+        x, y, w, h = cv2.boundingRect(box)
+        '''
+        xl=[]
+        xr=[]
+        # получаем средний x и длину отрезка
+        con_p=[[(contour[i-1][0][0]+contour[i][0][0])/2,math.dist(contour[i-1][0],contour[i][0])] for i in range(len(contour))]
+        for cnp in con_p:
+            if cnp[0]<cX:
+                xl.append(cnp)
+            elif cnp[0]>cX:
+                xr.append(cnp)
+        xlc=sum(x[0]*x[1] for x in xl)/sum(x[1] for x in xl)
+        xrc=sum(x[0]*x[1] for x in xr)/sum(x[1] for x in xr)
+        w=round(xrc-xlc)
+
+
         # [center, 1/2 line width]
-        lines_c.append([x_center, round((max(x)-min(x))/2)])
-        cv2.line(img2, (x_center, 0), (x_center, height),
-                 (0, 255, 0), thickness=1)
+        lines_c.append([cX, round(w/2)])
+        cv2.line(img2, (cX, 0), (cX, height),
+                 (0, 255, 0), thickness=2)
         # print(f'x_center={x_center}, y_min={y_min}, y_max={y_max}.')
     lines_c.sort(key=lambda x: x[0])
     UpdImage(img2)
